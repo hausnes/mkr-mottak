@@ -1,0 +1,30 @@
+# Bruk denne på NAS-en (Synology Container Manager → Prosjekt → Opprett, lim inn).
+# NB: Byt ut gruppenøklane under FØR du limer inn. Ikkje legg ekte nøklar i GitHub-repoet.
+services:
+  mkr-mottak:
+    image: ghcr.io/hausnes/mkr-mottak:latest
+    # Hent alltid nyaste versjon ved start, så «Stop → Build» i Container Manager er nok for å oppdatere
+    pull_policy: always
+    container_name: mkr-mottak
+    restart: unless-stopped
+    ports:
+      # Port 8010 på NAS-en (8000 er allereie brukt av er-det-trygt). Reverse proxyen peikar hit.
+      - "8010:8000"
+    volumes:
+      # CSV-filene. Eit Docker-volum overlever oppdateringar og omstart av containeren.
+      - mkr-data:/data
+    environment:
+      # Éi gruppe per Arduino: namn:nøkkel, skilde med komma.
+      # Namn: små bokstavar, tal og bindestrek (blir filnamnet, t.d. gruppe1.csv).
+      # Nøkkel: minst 8 teikn. Lag tilfeldige nøklar med:
+      #   python3 -c "import secrets; print(secrets.token_urlsafe(9))"
+      GRUPPER: >-
+        gruppe1:BYT-UT-nokkel-1,
+        gruppe2:BYT-UT-nokkel-2,
+        gruppe3:BYT-UT-nokkel-3
+      # Minste tid mellom to målingar frå same gruppe (vernar mot Arduino-kode som sender i ein loop utan pause)
+      MIN_SEKUND_MELLOM_MAALINGAR: 10
+      TIDSSONE: Europe/Oslo
+
+volumes:
+  mkr-data:

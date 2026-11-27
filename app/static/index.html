@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="nn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MKR-mottak</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --kort: #ffffff; --tekst: #1d2330; --svak: #5d6677; --linje: #dde1e8;
+    --aksent: #1f6feb; --flate: rgba(31, 111, 235, .12); --kode: #eef1f5;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --kort: #1b2029; --tekst: #e6e9ef; --svak: #98a2b3; --linje: #2c3340;
+      --aksent: #58a6ff; --flate: rgba(88, 166, 255, .15); --kode: #232a35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--tekst); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { margin: 0 0 4px; font-size: 1.6rem; }
+  .ingress { margin: 0 0 24px; color: var(--svak); }
+  .grupper { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .kort { background: var(--kort); border: 1px solid var(--linje); border-radius: 12px; padding: 16px; }
+  .topp { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .namn { font-weight: 600; }
+  .temp { font-size: 2rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .meta { color: var(--svak); font-size: .9rem; }
+  .gammal .temp { color: var(--svak); }
+  svg { display: block; width: 100%; height: 90px; margin: 8px 0 0; }
+  .tom { height: 90px; display: grid; place-items: center; color: var(--svak); font-size: .9rem;
+         border: 1px dashed var(--linje); border-radius: 8px; margin: 8px 0; }
+  a { color: var(--aksent); }
+  code { background: var(--kode); padding: 1px 5px; border-radius: 4px; font-size: .9em; word-break: break-all; }
+  footer { margin-top: 32px; color: var(--svak); font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>MKR-mottak</h1>
+  <p class="ingress">Temperaturmålingar sendt over mobilnettet frå Arduino MKR NB 1500. Sida blir oppdatert kvart 30. sekund.</p>
+  <div class="grupper" id="grupper"><p class="meta">Hentar målingar …</p></div>
+  <footer>
+    Les dataa rett inn i Python:
+    <code id="pandas">pd.read_csv(".../data/gruppe1.csv", parse_dates=["tid"])</code>
+  </footer>
+</main>
+<script>
+const PUNKT_I_GRAF = 360;
+const GAMMAL_ETTER_MIN = 10;
+const grupperEl = document.getElementById("grupper");
+const base = new URL(".", location.href).href;
+document.getElementById("pandas").textContent =
+  `pd.read_csv("${base}data/gruppe1.csv", parse_dates=["tid"])`;
+
+function tilDato(tid) { return new Date(tid.replace(" ", "T")); }
+
+function graf(maalingar) {
+  if (maalingar.length < 2) return `<div class="tom">For få målingar til graf</div>`;
+  const B = 300, H = 90, M = 4;
+  const temp = maalingar.map(m => m.temperatur);
+  let min = Math.min(...temp), max = Math.max(...temp);
+  if (max - min < 1) { const midt = (max + min) / 2; min = midt - 0.5; max = midt + 0.5; }
+  const x = i => M + i * (B - 2 * M) / (maalingar.length - 1);
+  const y = t => H - M - (t - min) * (H - 2 * M) / (max - min);
+  const punkt = temp.map((t, i) => `${x(i).toFixed(1)},${y(t).toFixed(1)}`).join(" ");
+  return `<svg viewBox="0 0 ${B} ${H}" preserveAspectRatio="none" role="img"
+      aria-label="Graf over dei siste ${maalingar.length} målingane, frå ${min.toFixed(1)} til ${max.toFixed(1)} °C">
+    <polygon points="${M},${H - M} ${punkt} ${B - M},${H - M}" fill="var(--flate)"/>
+    <polyline points="${punkt}" fill="none" stroke="var(--aksent)" stroke-width="2"
+      vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+  </svg>
+  <div class="meta">Siste ${maalingar.length} målingar: ${Math.min(...temp).toFixed(1)}–${Math.max(...temp).toFixed(1)} °C</div>`;
+}
+
+function kort(gruppe, maalingar) {
+  const s = gruppe.siste;
+  const gammal = s && (Date.now() - tilDato(s.tid)) / 60000 > GAMMAL_ETTER_MIN;
+  return `<section class="kort${gammal ? " gammal" : ""}">
+    <div class="topp">
+      <span class="namn">${gruppe.namn}</span>
+      <span class="meta">${gruppe.antal} målingar</span>
+    </div>
+    <div class="temp">${s ? s.temperatur.toFixed(2) + " °C" : "–"}</div>
+    <div class="meta">${s ? "Sist: " + s.tid + (gammal ? " (ingen nye på ei stund)" : "") : "Ingen målingar enno"}</div>
+    ${s ? graf(maalingar) : ""}
+    ${s ? `<p><a href="data/${gruppe.namn}.csv" download>Last ned CSV</a></p>` : ""}
+  </section>`;
+}
+
+async function oppdater() {
+  try {
+    const grupper = await (await fetch("api/grupper")).json();
+    const alle = await Promise.all(grupper.map(g => g.antal
+      ? fetch(`api/grupper/${g.namn}/maalingar?antal=${PUNKT_I_GRAF}`).then(r => r.json())
+      : []));
+    grupperEl.innerHTML = grupper.map((g, i) => kort(g, alle[i])).join("");
+  } catch (e) {
+    grupperEl.innerHTML = `<p class="meta">Klarte ikkje å hente målingar (${e.message}). Prøver igjen snart.</p>`;
+  }
+}
+oppdater();
+setInterval(oppdater, 30000);
+</script>
+</body>
+</html>
